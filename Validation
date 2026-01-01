@@ -1,0 +1,72 @@
+The Validation Code are as below :
+
+QSPICE Validation Workflow: Mealy FSM Output vs Hardware Circuit Output
+Outputs: TX_EN / TRIGGER / ALERT / ENC_VALID
+
+1. Objective
+This document provides a QSPICE-ready workflow to validate a Mealy finite-state machine (golden reference) against a real hardware (DUT) implementation for the output vector {TX_EN, TRIGGER, ALERT, ENC_VALID}. The validation produces an automatic PASS/FAIL result and a mismatch count.
+2. High-level Method
+Run the DUT and the golden Mealy model in parallel under identical digital inputs. At each clock cycle, compare each DUT output with its expected output. Any mismatch asserts a single flag MIS_ANY. PASS is declared if MIS_ANY stays low for the entire run.
+3. Required Signals
+Inputs (digital): VD_D, VP_D, ERR_D, CLK_D (and any additional inputs used in your paper).
+Outputs (digital): TRIGGER_HW, TX_EN_HW, ENC_HW, ALERT_HW (from DUT) and TRIGGER_EXP, TX_EN_EXP, ENC_EXP, ALERT_EXP (from golden model).
+4. Replace Xdut with an Existing Real-time Platform Subcircuit (Example)
+Export your real platform as a QSPICE subcircuit (.SUBCKT). Then include it and instantiate it as Xdut. Below is an example for a deployed mixed-signal platform subcircuit named HOLOGRAM_PLATFORM_TOP. Replace the subcircuit name and pin order with your exported netlist.
+; --- include the platform subcircuit exported from QSPICE schematic ---
+.include "HOLOGRAM_PLATFORM_TOP.sub"
+
+; --- instantiate DUT (real platform) ---
+; Pin order example:
+; Xdut VD_D VP_D CLK_D ERR_D  TRIGGER_HW TX_EN_HW ENC_HW ALERT_HW  HOLOGRAM_PLATFORM_TOP
+Xdut VD_D VP_D CLK_D ERR_D  TRIGGER_HW TX_EN_HW ENC_HW ALERT_HW  HOLOGRAM_PLATFORM_TOP
+
+5. Golden Mealy Reference Model (Edit δ and λ to match the paper)
+Implement the Mealy machine in QSPICE using (i) a state register (DFFs) and (ii) behavioral equations for next-state (δ) and output (λ). A common Holo-circuit structure is: Idle → DepthReady → PoseReady → Fusion → OutputStable (final) and an Alert state on ERR. Below is a compact example template; update the state encodings and transitions to exactly match the paper.
+; ---------------- Golden Mealy (template) ----------------
+; Example state bits q2 q1 q0 (3-bit encoding)
+; Define decoded state flags (edit encodings to match your paper)
+BIDLE   IDLE 0   V={VDD*(1-u(V(q2)-1))*(1-u(V(q1)-1))*(1-u(V(q0)-1))}     ; 000
+BDEPTH  DEP  0   V={VDD*(1-u(V(q2)-1))*(1-u(V(q1)-1))*u(V(q0)-1)}         ; 001
+BPOSE   POS  0   V={VDD*(1-u(V(q2)-1))*u(V(q1)-1)*(1-u(V(q0)-1))}         ; 010
+BFUSION FUS  0   V={VDD*(1-u(V(q2)-1))*u(V(q1)-1)*u(V(q0)-1)}             ; 011
+BSTABLE STB  0   V={VDD*u(V(q2)-1)*(1-u(V(q1)-1))*(1-u(V(q0)-1))}         ; 100
+BALRT   ALR  0   V={VDD*u(V(q2)-1)*(1-u(V(q1)-1))*u(V(q0)-1)}             ; 101
+
+; Fused-valid (example): g(t)=VD_D & VP_D (edit if paper uses different gating)
+Bg   G 0 V={VDD*u(V(VD_D)-1)*u(V(VP_D)-1)}
+
+; Outputs λ(q,x) (edit to match your paper)
+BTRIGGER_EXP TRIGGER_EXP 0 V={VDD*u(V(FUS)-1)*u(V(G)-1)}                  ; TRIGGER ≡ GAND_EN in Fusion
+BALERT_EXP   ALERT_EXP   0 V={VDD*u(V(ERR_D)-1)}                          ; ALERT on ERR
+BTX_EN_EXP   TX_EN_EXP   0 V={VDD*u(V(STB)-1)*u(V(CLK_D)-1)}              ; TX_EN pulse in OutputStable
+BENC_EXP     ENC_EXP     0 V={VDD*u(V(TX_EN_EXP)-1)}                      ; ENC_VALID = TX_EN (example)
+
+; Next-state δ(q,x): implement D2,D1,D0 equations (edit rules to match the paper)
+; Then clock them into q2,q1,q0 using DFFs (preferred) or edge-sampled storage.
+
+6. Output Comparators and MIS_ANY Flag
+Compare DUT vs expected outputs using absolute difference (or XOR after thresholding). Then OR all mismatches into MIS_ANY. The run PASSes if MIS_ANY stays low.
+; ------------- Mismatch detection -------------
+BMIS_TRIG MIS_TRIG 0 V=if(abs(V(TRIGGER_HW)-V(TRIGGER_EXP))>VTH,VDD,0)
+BMIS_TX   MIS_TX   0 V=if(abs(V(TX_EN_HW)-V(TX_EN_EXP))>VTH,VDD,0)
+BMIS_ENC  MIS_ENC  0 V=if(abs(V(ENC_HW)-V(ENC_EXP))>VTH,VDD,0)
+BMIS_ALR  MIS_ALR  0 V=if(abs(V(ALERT_HW)-V(ALERT_EXP))>VTH,VDD,0)
+
+BMIS_ANY MIS_ANY 0 V=if( V(MIS_TRIG)>VTH | V(MIS_TX)>VTH | V(MIS_ENC)>VTH | V(MIS_ALR)>VTH, VDD, 0 )
+
+7. Automatic PASS/FAIL and Mismatch Count in QSPICE
+Use .meas to compute MIS_MAX and estimate the number of mismatched cycles. PASS is 1 if MIS_MAX < VTH.
+; ------------- Measurements -------------
+.meas tran MIS_MAX  max   V(MIS_ANY) from=0 to=TSTOP
+.meas tran MIS_AREA integ V(MIS_ANY) from=0 to=TSTOP
+.meas tran MIS_CNT  param='MIS_AREA/(VDD*TCLK)'
+.meas tran PASS     param='(MIS_MAX<VTH)'
+
+8. What to Deliver as Validation Output (for the paper)
+Include the following plots/screenshots from QSPICE:
+•	Overlaid outputs: TRIGGER_HW vs TRIGGER_EXP, TX_EN_HW vs TX_EN_EXP, ENC_HW vs ENC_EXP, ALERT_HW vs ALERT_EXP.
+•	Mismatch flag MIS_ANY (should remain 0 for normal/real case).
+•	Fraud/attack case: show MIS_ANY = 1 during the fault window (e.g., ERR asserted or injected glitch).
+•	QSPICE measurement results: MIS_MAX, MIS_CNT, PASS.
+9. For Real Hardware Platforms
+If the DUT outputs are registered (one-cycle latency), delay the expected outputs by one clock or compare only at sampling edges. Additionally, it should be ensured the same digitization thresholds are used for analog-to-digital conversions.
