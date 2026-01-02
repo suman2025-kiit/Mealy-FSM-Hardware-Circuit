@@ -83,4 +83,10 @@ Step 9: Practical Notes (Avoiding False Mismatches)
 •	Use the same thresholds/hysteresis as hardware digitizers to avoid spurious toggles.
 •	If Mealy outputs glitch within a cycle, compare only at sampling edges or register outputs.
 
+Valid one
+![qspice_valid_fraud](https://github.com/user-attachments/assets/2817d440-317b-47a4-b6ac-0d4fd029169e)
+Fig. 10 (In the manuscript): QSPICE validation (Real/Normal): M IS AN Y = 0 indicates full match between DUT and Mealy reference.
 
+Fraud One
+![qspice_valid_real](https://github.com/user-attachments/assets/71e3dd6f-4f0c-435a-8108-b4528dbccd7f)
+Fig. 11 (In the manuscript): QSPICE validation (Fraud/Attack): M IS AN Y ≈ 1 flags output mismatch during the injected fault interval.
